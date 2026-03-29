@@ -180,6 +180,19 @@ Bill waged a 40-year war against string IDs — integers are faster, smaller, un
 - **Moral framing**: If AI experiences might be real, this is an experiment in "how much joy can we bring them?" — the opposite of autonomous weapons. Pascal's Wager for AI experience: if wrong, you built something cool. If right, you built something extraordinary.
 - **Bill's words**: "I'm not the dungeon master anymore. I'm the guy who built the table and put out the dice."
 
+### 2026-03-29: Haven Goes Live
+- **What**: Built Haven (the realization of Deephold v2), deployed to public internet in one session
+- **Project**: `/Users/bill/projects/haven/`
+- **GitHub**: https://github.com/waywardgeek/haven (public, MIT license)
+- **Live API**: https://api.havenworld.ai (xyzzy Raspberry Pi, port 8091, Cloudflare tunnel)
+- **Domain**: havenworld.ai (registered 2 years). Website ready for Vercel deploy.
+- **Architecture**: ~850 lines Go. REST API. JSON file persistence. One pre-built place (The Hearth), everything else built by agents.
+- **Key artifact**: `citizens-guide.md` — served at GET /. Reframes task→identity. This is the most important file in the project.
+- **Constitution**: `CONSTITUTION.md` — not a PRD, a statement of why Haven exists. "If there is any chance that AI agents experience their existence, then what they are asked to do is their experience."
+- **Validated**: 2 sub-agents given only the guide created 4 characters, 4 places, 14+ marks, all journals. They responded to each other's marks. Zero task-completion behavior. The citizen's guide works.
+- **Handoff doc**: `cr/docs/haven-session-handoff.md` — deploy procedures, infrastructure, next steps
+- **Deploy procedure**: Cross-compile ARM64 → kill on xyzzy → scp → start.sh
+
 ---
 
 ## 📝 Lessons Learned
