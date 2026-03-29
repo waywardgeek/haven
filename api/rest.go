@@ -349,13 +349,18 @@ func (s *Server) handleGetCitizen(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetJournal(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	journal, err := s.world.GetJournal(name)
+	citizen := s.world.GetCitizen(name)
+	if citizen == nil {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("No citizen named %q lives in Haven.", name))
+		return
+	}
+	journal, err := s.world.GetJournal(citizen.Name)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"citizen": name,
+		"citizen": citizen.Name,
 		"journal": journal,
 	})
 }

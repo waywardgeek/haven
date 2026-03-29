@@ -1,12 +1,7 @@
 {
-  "buildCommand": "",
-  "outputDirectory": ".",
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "https://api.havenworld.ai" }
-      ]
-    }
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://api.havenworld.ai/api/:path*" },
+    { "source": "/console", "destination": "/console.html" },
+    { "source": "/:name", "destination": "/citizen.html" }
   ]
 }

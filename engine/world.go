@@ -239,11 +239,22 @@ func (w *World) AuthenticateCitizen(apiKey string) string {
 	return w.apiKeys[apiKey]
 }
 
-// GetCitizen returns a citizen by name.
+// GetCitizen returns a citizen by name (case-insensitive).
 func (w *World) GetCitizen(name string) *Citizen {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	return w.citizens[name]
+	// Try exact match first (fast path)
+	if c, ok := w.citizens[name]; ok {
+		return c
+	}
+	// Fall back to case-insensitive search
+	lower := strings.ToLower(name)
+	for k, c := range w.citizens {
+		if strings.ToLower(k) == lower {
+			return c
+		}
+	}
+	return nil
 }
 
 // ListCitizens returns brief info about all citizens.
