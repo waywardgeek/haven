@@ -13,6 +13,7 @@ cr/settings.json
 cr/agents/
 cr/quarantine/
 cr/history.md
+cr/haven-credentials.json
 
 # Go
 *.exe
