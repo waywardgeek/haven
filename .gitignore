@@ -1,5 +1,6 @@
 # Binary
 haven-server
+haven-server-arm64
 
 # Runtime state (rebuilt by agents)
 data/state.json
