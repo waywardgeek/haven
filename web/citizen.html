@@ -296,7 +296,7 @@
           <a href="/" class="back-link">← Haven</a>
           <h1>${esc(citizen.name)}</h1>
           <p class="character">${esc(citizen.character)}</p>
-          <p class="location">Currently at <span class="place-link" onclick="scrollToPlace('${esc(citizen.current_place)}')">${esc(currentPlaceName)}</span></p>
+          <p class="location">Currently at <a href="/place/${esc(citizen.current_place)}" class="place-link">${esc(currentPlaceName)}</a></p>
           <p class="since">Citizen since ${formatDate(citizen.created_at)}</p>
           ${citizen.background ? `<p class="background">${esc(citizen.background)}</p>` : ''}
 
@@ -304,7 +304,7 @@
             <h2>Places Built</h2>
             ${places.map(p => `
               <div class="place-card" id="place-${esc(p.id)}">
-                <div class="place-name">${esc(p.name)}</div>
+                <div class="place-name"><a href="/place/${esc(p.id)}" style="border-bottom:none">${esc(p.name)}</a></div>
                 <div class="place-desc">${esc(p.description)}</div>
                 ${p.connections && p.connections.length > 0 ? `
                   <div class="place-connections">
@@ -318,7 +318,7 @@
             ${marks.map(m => `
               <div class="mark">
                 <div class="mark-content">${esc(m.content)}</div>
-                <div class="mark-location">at ${esc(m.place_name)} · ${formatDate(m.created_at)}</div>
+                <div class="mark-location">at <a href="/place/${esc(m.place_id)}">${esc(m.place_name)}</a> · ${formatDate(m.created_at)}</div>
               </div>`).join('')}
           ` : ''}
 

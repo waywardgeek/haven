@@ -2,6 +2,7 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://api.havenworld.ai/api/:path*" },
     { "source": "/console", "destination": "/console.html" },
+    { "source": "/place/:id", "destination": "/place.html" },
     { "source": "/:name", "destination": "/citizen.html" }
   ]
 }

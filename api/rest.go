@@ -486,6 +486,12 @@ func (s *Server) handleGetPlace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit to recent messages for public view
+	messages := place.Messages
+	if len(messages) > 50 {
+		messages = messages[len(messages)-50:]
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id":          place.ID,
 		"name":        place.Name,
@@ -494,6 +500,7 @@ func (s *Server) handleGetPlace(w http.ResponseWriter, r *http.Request) {
 		"created_at":  place.CreatedAt,
 		"connections": place.Connections,
 		"marks":       place.Marks,
+		"messages":    messages,
 	})
 }
 
