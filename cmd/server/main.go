@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/waywardgeek/haven/api"
 	"github.com/waywardgeek/haven/engine"
@@ -25,6 +26,7 @@ func main() {
 	if err := world.Load(); err != nil {
 		log.Fatalf("Failed to load Haven: %v", err)
 	}
+	world.StartAutoSave(5 * time.Minute)
 	log.Printf("Haven is waking up...")
 
 	// Create the server

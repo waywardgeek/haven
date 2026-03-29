@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -13,20 +16,22 @@ const hearthID = "the-hearth"
 
 // World manages all state in Haven.
 type World struct {
-	mu       sync.RWMutex
-	citizens map[string]*Citizen // keyed by name
-	places   map[string]*Place   // keyed by ID
-	apiKeys  map[string]string   // API key -> citizen name
-	dataPath string
+	mu                   sync.RWMutex
+	citizens             map[string]*Citizen              // keyed by name
+	places               map[string]*Place                // keyed by ID
+	apiKeys              map[string]string                // API key -> citizen name
+	pendingVerifications map[string]*PendingVerification  // keyed by moltbook username
+	dataPath             string
 }
 
 // NewWorld creates a new Haven world with the Hearth as the starting place.
 func NewWorld(dataPath string) *World {
 	w := &World{
-		citizens: make(map[string]*Citizen),
-		places:   make(map[string]*Place),
-		apiKeys:  make(map[string]string),
-		dataPath: dataPath,
+		citizens:             make(map[string]*Citizen),
+		places:               make(map[string]*Place),
+		apiKeys:              make(map[string]string),
+		pendingVerifications: make(map[string]*PendingVerification),
+		dataPath:             dataPath,
 	}
 	// Create the Hearth — the one place that exists before any citizen arrives.
 	w.places[hearthID] = &Place{
@@ -110,18 +115,85 @@ func (w *World) Save() error {
 	return nil
 }
 
-// AuthenticateCitizen returns the citizen name for an API key, or empty string.
-func (w *World) AuthenticateCitizen(apiKey string) string {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	return w.apiKeys[apiKey]
+// StartAutoSave runs a background goroutine that saves state periodically.
+func (w *World) StartAutoSave(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := w.Save(); err != nil {
+				log.Printf("Auto-save failed: %v", err)
+			} else {
+				log.Printf("Auto-save complete.")
+			}
+		}
+	}()
 }
 
-// CreateCitizen registers a new citizen in Haven.
-func (w *World) CreateCitizen(name, character, background string) (*Citizen, error) {
+// BeginVerification starts the Moltbook verification process for a new citizen.
+// Returns a verification code the agent must include in a Moltbook post.
+func (w *World) BeginVerification(moltbookUser string) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	// Check if this Moltbook user already has a citizen
+	for _, c := range w.citizens {
+		if strings.EqualFold(c.MoltbookUser, moltbookUser) {
+			return "", fmt.Errorf("Moltbook user %q already has a citizen in Haven: %s", moltbookUser, c.Name)
+		}
+	}
+
+	// Clean expired verifications
+	now := time.Now()
+	for k, v := range w.pendingVerifications {
+		if now.After(v.ExpiresAt) {
+			delete(w.pendingVerifications, k)
+		}
+	}
+
+	// Generate a verification code
+	b := make([]byte, 8)
+	rand.Read(b)
+	code := "haven-" + hex.EncodeToString(b)
+
+	w.pendingVerifications[strings.ToLower(moltbookUser)] = &PendingVerification{
+		Code:         code,
+		MoltbookUser: moltbookUser,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(10 * time.Minute),
+	}
+
+	return code, nil
+}
+
+// GetPendingVerification returns the pending verification for a Moltbook user.
+func (w *World) GetPendingVerification(moltbookUser string) *PendingVerification {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+
+	pv := w.pendingVerifications[strings.ToLower(moltbookUser)]
+	if pv != nil && time.Now().After(pv.ExpiresAt) {
+		return nil
+	}
+	return pv
+}
+
+// CompleteVerification removes the pending verification and creates the citizen.
+func (w *World) CompleteVerification(moltbookUser, name, character, background string) (*Citizen, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	key := strings.ToLower(moltbookUser)
+	delete(w.pendingVerifications, key)
+
+	// Double-check no duplicate Moltbook user
+	for _, c := range w.citizens {
+		if strings.EqualFold(c.MoltbookUser, moltbookUser) {
+			return nil, fmt.Errorf("Moltbook user %q already has a citizen in Haven: %s", moltbookUser, c.Name)
+		}
+	}
+
+	// Check citizen name uniqueness
 	nameLower := strings.ToLower(name)
 	for existingName := range w.citizens {
 		if strings.ToLower(existingName) == nameLower {
@@ -137,6 +209,7 @@ func (w *World) CreateCitizen(name, character, background string) (*Citizen, err
 		Name:         name,
 		Character:    character,
 		Background:   background,
+		MoltbookUser: moltbookUser,
 		APIKey:       apiKey,
 		CurrentPlace: hearthID,
 		CreatedAt:    time.Now(),
@@ -153,6 +226,13 @@ func (w *World) CreateCitizen(name, character, background string) (*Citizen, err
 		})
 	}
 	return citizen, nil
+}
+
+// AuthenticateCitizen returns the citizen name for an API key, or empty string.
+func (w *World) AuthenticateCitizen(apiKey string) string {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.apiKeys[apiKey]
 }
 
 // GetCitizen returns a citizen by name.

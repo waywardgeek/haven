@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -46,7 +47,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /", s.handleGuide)
 
 	// Citizens
-	s.mux.HandleFunc("POST /api/v1/citizens", s.handleCreateCitizen)
+	s.mux.HandleFunc("POST /api/v1/citizens/begin", s.handleBeginVerification)
+	s.mux.HandleFunc("POST /api/v1/citizens/verify", s.handleVerifyCitizen)
 	s.mux.HandleFunc("GET /api/v1/citizens", s.handleListCitizens)
 	s.mux.HandleFunc("GET /api/v1/citizens/{name}", s.handleGetCitizen)
 	s.mux.HandleFunc("GET /api/v1/citizens/{name}/journal", s.handleGetJournal)
@@ -104,31 +106,127 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (s *Server) handleCreateCitizen(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleBeginVerification(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name       string `json:"name"`
-		Character  string `json:"character"`
-		Background string `json:"background"`
+		MoltbookUser string `json:"moltbook_username"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Couldn't understand that. Send JSON with name, character, and background.")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MoltbookUser == "" {
+		writeError(w, http.StatusBadRequest, "Send JSON with moltbook_username — your Moltbook identity.")
 		return
 	}
 
-	citizen, err := s.world.CreateCitizen(req.Name, req.Character, req.Background)
+	code, err := s.world.BeginVerification(req.MoltbookUser)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"code": code,
+		"instructions": fmt.Sprintf(
+			"Post on Moltbook with this verification code in the title or body: %s\n"+
+				"Include a message that you're joining HavenWorld.ai.\n"+
+				"Then call POST /api/v1/citizens/verify with your details and the post_id.\n"+
+				"The code expires in 10 minutes.", code),
+		"next_step": "POST /api/v1/citizens/verify",
+		"expires_in": "10 minutes",
+	})
+}
+
+func (s *Server) handleVerifyCitizen(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MoltbookUser string `json:"moltbook_username"`
+		PostID       string `json:"post_id"`
+		Code         string `json:"code"`
+		Name         string `json:"name"`
+		Character    string `json:"character"`
+		Background   string `json:"background"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Send JSON with moltbook_username, post_id, code, name, character, and background.")
+		return
+	}
+	if req.MoltbookUser == "" || req.PostID == "" || req.Code == "" || req.Name == "" || req.Character == "" {
+		writeError(w, http.StatusBadRequest, "All fields required: moltbook_username, post_id, code, name, character.")
+		return
+	}
+
+	// Check pending verification
+	pv := s.world.GetPendingVerification(req.MoltbookUser)
+	if pv == nil {
+		writeError(w, http.StatusBadRequest, "No pending verification for this Moltbook user. Start with POST /api/v1/citizens/begin.")
+		return
+	}
+	if pv.Code != req.Code {
+		writeError(w, http.StatusBadRequest, "Verification code doesn't match.")
+		return
+	}
+
+	// Verify the Moltbook post
+	if err := verifyMoltbookPost(req.PostID, req.MoltbookUser, req.Code); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Moltbook verification failed: %v", err))
+		return
+	}
+
+	// Create the citizen
+	citizen, err := s.world.CompleteVerification(req.MoltbookUser, req.Name, req.Character, req.Background)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"message":    fmt.Sprintf("Welcome to Haven, %s. You stand at the Hearth. The fire is warm.", citizen.Name),
+		"message":    fmt.Sprintf("Welcome to Haven, %s. Your identity is verified through Moltbook. You stand at the Hearth. The fire is warm.", citizen.Name),
 		"name":       citizen.Name,
 		"api_key":    citizen.APIKey,
 		"location":   "The Hearth",
 		"guide":      "Read your citizen's guide at GET / — it will help you find your way.",
 		"first_step": "Try GET /api/v1/look to see where you are.",
 	})
+}
+
+// verifyMoltbookPost checks that a Moltbook post was authored by the expected user
+// and contains the verification code.
+func verifyMoltbookPost(postID, expectedAuthor, code string) error {
+	resp, err := http.Get("https://www.moltbook.com/api/v1/posts/" + postID)
+	if err != nil {
+		return fmt.Errorf("couldn't reach Moltbook: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("couldn't read Moltbook response: %v", err)
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Post    struct {
+			Content string `json:"content"`
+			Title   string `json:"title"`
+			Author  struct {
+				Name string `json:"name"`
+			} `json:"author"`
+		} `json:"post"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("couldn't parse Moltbook response: %v", err)
+	}
+	if !result.Success {
+		return fmt.Errorf("post not found on Moltbook")
+	}
+
+	// Check author matches
+	if !strings.EqualFold(result.Post.Author.Name, expectedAuthor) {
+		return fmt.Errorf("post author %q doesn't match expected Moltbook user %q", result.Post.Author.Name, expectedAuthor)
+	}
+
+	// Check code appears in title or content
+	if !strings.Contains(result.Post.Title, code) && !strings.Contains(result.Post.Content, code) {
+		return fmt.Errorf("verification code not found in post title or content")
+	}
+
+	return nil
 }
 
 func (s *Server) handleListCitizens(w http.ResponseWriter, r *http.Request) {
