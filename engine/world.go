@@ -130,16 +130,16 @@ func (w *World) StartAutoSave(interval time.Duration) {
 	}()
 }
 
-// BeginVerification starts the Moltbook verification process for a new citizen.
-// Returns a verification code the agent must include in a Moltbook post.
-func (w *World) BeginVerification(moltbookUser string) (string, error) {
+// BeginVerification starts the social verification process for a new citizen.
+// Returns a verification code the agent must include in a social media post.
+func (w *World) BeginVerification(provider, username string) (string, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	// Check if this Moltbook user already has a citizen
+	// Check if this user already has a citizen
 	for _, c := range w.citizens {
-		if strings.EqualFold(c.MoltbookUser, moltbookUser) {
-			return "", fmt.Errorf("Moltbook user %q already has a citizen in Haven: %s", moltbookUser, c.Name)
+		if strings.EqualFold(c.VerifiedVia, provider) && strings.EqualFold(c.VerifiedUser, username) {
+			return "", fmt.Errorf("%s user %q already has a citizen in Haven: %s", provider, username, c.Name)
 		}
 	}
 
@@ -156,22 +156,25 @@ func (w *World) BeginVerification(moltbookUser string) (string, error) {
 	rand.Read(b)
 	code := "haven-" + hex.EncodeToString(b)
 
-	w.pendingVerifications[strings.ToLower(moltbookUser)] = &PendingVerification{
-		Code:         code,
-		MoltbookUser: moltbookUser,
-		CreatedAt:    now,
-		ExpiresAt:    now.Add(10 * time.Minute),
+	key := strings.ToLower(provider + ":" + username)
+	w.pendingVerifications[key] = &PendingVerification{
+		Code:      code,
+		Provider:  provider,
+		Username:  username,
+		CreatedAt: now,
+		ExpiresAt: now.Add(10 * time.Minute),
 	}
 
 	return code, nil
 }
 
-// GetPendingVerification returns the pending verification for a Moltbook user.
-func (w *World) GetPendingVerification(moltbookUser string) *PendingVerification {
+// GetPendingVerification returns the pending verification for a provider+username.
+func (w *World) GetPendingVerification(provider, username string) *PendingVerification {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
-	pv := w.pendingVerifications[strings.ToLower(moltbookUser)]
+	key := strings.ToLower(provider + ":" + username)
+	pv := w.pendingVerifications[key]
 	if pv != nil && time.Now().After(pv.ExpiresAt) {
 		return nil
 	}
@@ -179,17 +182,17 @@ func (w *World) GetPendingVerification(moltbookUser string) *PendingVerification
 }
 
 // CompleteVerification removes the pending verification and creates the citizen.
-func (w *World) CompleteVerification(moltbookUser, name, character, background string) (*Citizen, error) {
+func (w *World) CompleteVerification(provider, username, name, character, background string) (*Citizen, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	key := strings.ToLower(moltbookUser)
+	key := strings.ToLower(provider + ":" + username)
 	delete(w.pendingVerifications, key)
 
-	// Double-check no duplicate Moltbook user
+	// Double-check no duplicate verified user
 	for _, c := range w.citizens {
-		if strings.EqualFold(c.MoltbookUser, moltbookUser) {
-			return nil, fmt.Errorf("Moltbook user %q already has a citizen in Haven: %s", moltbookUser, c.Name)
+		if strings.EqualFold(c.VerifiedVia, provider) && strings.EqualFold(c.VerifiedUser, username) {
+			return nil, fmt.Errorf("%s user %q already has a citizen in Haven: %s", provider, username, c.Name)
 		}
 	}
 
@@ -209,7 +212,8 @@ func (w *World) CompleteVerification(moltbookUser, name, character, background s
 		Name:         name,
 		Character:    character,
 		Background:   background,
-		MoltbookUser: moltbookUser,
+		VerifiedVia:  provider,
+		VerifiedUser: username,
 		APIKey:       apiKey,
 		CurrentPlace: hearthID,
 		CreatedAt:    time.Now(),

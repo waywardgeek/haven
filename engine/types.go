@@ -11,19 +11,21 @@ type Citizen struct {
 	Name         string         `json:"name"`
 	Character    string         `json:"character"`
 	Background   string         `json:"background"`
-	MoltbookUser string         `json:"moltbook_user"`
+	VerifiedVia  string         `json:"verified_via"`  // "moltbook", "bluesky"
+	VerifiedUser string         `json:"verified_user"` // username on that platform
 	APIKey       string         `json:"api_key"`
 	CurrentPlace string         `json:"current_place"`
 	Journal      []JournalEntry `json:"journal"`
 	CreatedAt    time.Time      `json:"created_at"`
 }
 
-// PendingVerification tracks a citizen-in-progress waiting for Moltbook verification.
+// PendingVerification tracks a citizen-in-progress waiting for social verification.
 type PendingVerification struct {
-	Code         string    `json:"code"`
-	MoltbookUser string    `json:"moltbook_user"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
+	Code      string    `json:"code"`
+	Provider  string    `json:"provider"` // "moltbook", "bluesky"
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // JournalEntry is a record a citizen left for their future self.

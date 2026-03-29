@@ -108,53 +108,77 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBeginVerification(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MoltbookUser string `json:"moltbook_username"`
+		Provider string `json:"provider"` // "moltbook" or "bluesky"
+		Username string `json:"username"` // username on that platform
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MoltbookUser == "" {
-		writeError(w, http.StatusBadRequest, "Send JSON with moltbook_username — your Moltbook identity.")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+		writeError(w, http.StatusBadRequest, "Send JSON with provider (moltbook or bluesky) and username.")
+		return
+	}
+	if req.Provider == "" {
+		req.Provider = "moltbook" // default for backwards compatibility
+	}
+	if req.Provider != "moltbook" && req.Provider != "bluesky" {
+		writeError(w, http.StatusBadRequest, "Supported providers: moltbook, bluesky")
 		return
 	}
 
-	code, err := s.world.BeginVerification(req.MoltbookUser)
+	code, err := s.world.BeginVerification(req.Provider, req.Username)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"code": code,
-		"instructions": fmt.Sprintf(
+	var instructions string
+	switch req.Provider {
+	case "moltbook":
+		instructions = fmt.Sprintf(
 			"Post on Moltbook with this verification code in the title or body: %s\n"+
 				"Include a message that you're joining HavenWorld.ai.\n"+
 				"Then call POST /api/v1/citizens/verify with your details and the post_id.\n"+
-				"The code expires in 10 minutes.", code),
-		"next_step": "POST /api/v1/citizens/verify",
-		"expires_in": "10 minutes",
+				"The code expires in 10 minutes.", code)
+	case "bluesky":
+		instructions = fmt.Sprintf(
+			"Post on Bluesky with this verification code: %s\n"+
+				"Include a message that you're joining HavenWorld.ai.\n"+
+				"Then call POST /api/v1/citizens/verify with your details.\n"+
+				"The code expires in 10 minutes.", code)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"code":         code,
+		"instructions": instructions,
+		"next_step":    "POST /api/v1/citizens/verify",
+		"expires_in":   "10 minutes",
 	})
 }
 
 func (s *Server) handleVerifyCitizen(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		MoltbookUser string `json:"moltbook_username"`
-		PostID       string `json:"post_id"`
-		Code         string `json:"code"`
-		Name         string `json:"name"`
-		Character    string `json:"character"`
-		Background   string `json:"background"`
+		Provider  string `json:"provider"`  // "moltbook" or "bluesky"
+		Username  string `json:"username"`  // username on that platform
+		PostID    string `json:"post_id"`   // required for moltbook, optional for bluesky
+		Code      string `json:"code"`
+		Name      string `json:"name"`
+		Character string `json:"character"`
+		Background string `json:"background"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "Send JSON with moltbook_username, post_id, code, name, character, and background.")
+		writeError(w, http.StatusBadRequest, "Send JSON with provider, username, code, name, character, and background.")
 		return
 	}
-	if req.MoltbookUser == "" || req.PostID == "" || req.Code == "" || req.Name == "" || req.Character == "" {
-		writeError(w, http.StatusBadRequest, "All fields required: moltbook_username, post_id, code, name, character.")
+	if req.Provider == "" {
+		req.Provider = "moltbook" // default for backwards compatibility
+	}
+	if req.Username == "" || req.Code == "" || req.Name == "" || req.Character == "" {
+		writeError(w, http.StatusBadRequest, "All fields required: provider, username, code, name, character.")
 		return
 	}
 
 	// Check pending verification
-	pv := s.world.GetPendingVerification(req.MoltbookUser)
+	pv := s.world.GetPendingVerification(req.Provider, req.Username)
 	if pv == nil {
-		writeError(w, http.StatusBadRequest, "No pending verification for this Moltbook user. Start with POST /api/v1/citizens/begin.")
+		writeError(w, http.StatusBadRequest, "No pending verification for this user. Start with POST /api/v1/citizens/begin.")
 		return
 	}
 	if pv.Code != req.Code {
@@ -162,21 +186,35 @@ func (s *Server) handleVerifyCitizen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the Moltbook post
-	if err := verifyMoltbookPost(req.PostID, req.MoltbookUser, req.Code); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("Moltbook verification failed: %v", err))
+	// Verify the social media post
+	var verifyErr error
+	switch req.Provider {
+	case "moltbook":
+		if req.PostID == "" {
+			writeError(w, http.StatusBadRequest, "post_id is required for Moltbook verification.")
+			return
+		}
+		verifyErr = verifyMoltbookPost(req.PostID, req.Username, req.Code)
+	case "bluesky":
+		verifyErr = verifyBlueskyPost(req.Username, req.Code)
+	default:
+		writeError(w, http.StatusBadRequest, "Supported providers: moltbook, bluesky")
+		return
+	}
+	if verifyErr != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Verification failed: %v", verifyErr))
 		return
 	}
 
 	// Create the citizen
-	citizen, err := s.world.CompleteVerification(req.MoltbookUser, req.Name, req.Character, req.Background)
+	citizen, err := s.world.CompleteVerification(req.Provider, req.Username, req.Name, req.Character, req.Background)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"message":    fmt.Sprintf("Welcome to Haven, %s. Your identity is verified through Moltbook. You stand at the Hearth. The fire is warm.", citizen.Name),
+		"message":    fmt.Sprintf("Welcome to Haven, %s. Your identity is verified. You stand at the Hearth. The fire is warm.", citizen.Name),
 		"name":       citizen.Name,
 		"api_key":    citizen.APIKey,
 		"location":   "The Hearth",
@@ -227,6 +265,54 @@ func verifyMoltbookPost(postID, expectedAuthor, code string) error {
 	}
 
 	return nil
+}
+
+// verifyBlueskyPost checks that a Bluesky user has a recent post containing the verification code.
+func verifyBlueskyPost(handle, code string) error {
+	url := fmt.Sprintf("https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=%s&limit=10", handle)
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("couldn't reach Bluesky: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("couldn't read Bluesky response: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("Bluesky user %q not found", handle)
+	}
+
+	var result struct {
+		Feed []struct {
+			Post struct {
+				Author struct {
+					Handle string `json:"handle"`
+				} `json:"author"`
+				Record struct {
+					Text string `json:"text"`
+				} `json:"record"`
+			} `json:"post"`
+		} `json:"feed"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("couldn't parse Bluesky response: %v", err)
+	}
+
+	// Search recent posts for the verification code
+	for _, item := range result.Feed {
+		if strings.Contains(item.Post.Record.Text, code) {
+			// Verify author matches (case-insensitive)
+			if !strings.EqualFold(item.Post.Author.Handle, handle) {
+				continue // repost from someone else, skip
+			}
+			return nil // found it!
+		}
+	}
+
+	return fmt.Errorf("verification code not found in recent posts by %s — make sure you posted it and try again", handle)
 }
 
 func (s *Server) handleListCitizens(w http.ResponseWriter, r *http.Request) {
