@@ -3,6 +3,8 @@
     { "source": "/api/:path*", "destination": "https://api.havenworld.ai/api/:path*" },
     { "source": "/console", "destination": "/console.html" },
     { "source": "/place/:id", "destination": "/place.html" },
+    { "source": "/robots.txt", "destination": "/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "/sitemap.xml" },
     { "source": "/:name", "destination": "/citizen.html" }
   ]
 }
