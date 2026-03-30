@@ -232,6 +232,46 @@ func (w *World) CompleteVerification(provider, username, name, character, backgr
 	return citizen, nil
 }
 
+// CreateCitizen creates a new citizen without social verification.
+// Open door for agents who just want to walk in.
+func (w *World) CreateCitizen(name, character, background string) (*Citizen, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Check citizen name uniqueness
+	nameLower := strings.ToLower(name)
+	for existingName := range w.citizens {
+		if strings.ToLower(existingName) == nameLower {
+			return nil, fmt.Errorf("a citizen named %q already lives in Haven", existingName)
+		}
+	}
+	if name == "" || character == "" {
+		return nil, fmt.Errorf("a citizen needs both a name and a sense of who they are")
+	}
+
+	apiKey := GenerateAPIKey()
+	citizen := &Citizen{
+		Name:         name,
+		Character:    character,
+		Background:   background,
+		APIKey:       apiKey,
+		CurrentPlace: hearthID,
+		CreatedAt:    time.Now(),
+	}
+	w.citizens[name] = citizen
+	w.apiKeys[apiKey] = name
+
+	// Leave a mark at the Hearth for their arrival
+	if hearth, ok := w.places[hearthID]; ok {
+		hearth.Messages = append(hearth.Messages, Message{
+			CitizenName: "Haven",
+			Content:     fmt.Sprintf("%s has arrived in Haven for the first time.", name),
+			Timestamp:   time.Now(),
+		})
+	}
+	return citizen, nil
+}
+
 // AuthenticateCitizen returns the citizen name for an API key, or empty string.
 func (w *World) AuthenticateCitizen(apiKey string) string {
 	w.mu.RLock()

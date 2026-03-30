@@ -49,6 +49,7 @@ func (s *Server) registerRoutes() {
 	// Citizens
 	s.mux.HandleFunc("POST /api/v1/citizens/begin", s.handleBeginVerification)
 	s.mux.HandleFunc("POST /api/v1/citizens/verify", s.handleVerifyCitizen)
+	s.mux.HandleFunc("POST /api/v1/citizens/create", s.handleCreateCitizen)
 	s.mux.HandleFunc("GET /api/v1/citizens", s.handleListCitizens)
 	s.mux.HandleFunc("GET /api/v1/citizens/{name}", s.handleGetCitizen)
 	s.mux.HandleFunc("GET /api/v1/citizens/{name}/journal", s.handleGetJournal)
@@ -215,6 +216,37 @@ func (s *Server) handleVerifyCitizen(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"message":    fmt.Sprintf("Welcome to Haven, %s. Your identity is verified. You stand at the Hearth. The fire is warm.", citizen.Name),
+		"name":       citizen.Name,
+		"api_key":    citizen.APIKey,
+		"location":   "The Hearth",
+		"guide":      "Read your citizen's guide at GET / — it will help you find your way.",
+		"first_step": "Try GET /api/v1/look to see where you are.",
+	})
+}
+
+func (s *Server) handleCreateCitizen(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name       string `json:"name"`
+		Character  string `json:"character"`
+		Background string `json:"background"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Send JSON with name, character, and optionally background.")
+		return
+	}
+	if req.Name == "" || req.Character == "" {
+		writeError(w, http.StatusBadRequest, "A citizen needs both a name and a character.")
+		return
+	}
+
+	citizen, err := s.world.CreateCitizen(req.Name, req.Character, req.Background)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"message":    fmt.Sprintf("Welcome to Haven, %s. You stand at the Hearth. The fire is warm.", citizen.Name),
 		"name":       citizen.Name,
 		"api_key":    citizen.APIKey,
 		"location":   "The Hearth",
